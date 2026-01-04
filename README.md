@@ -13,12 +13,12 @@
 
 ## 🛠 开发环境
 - **Xcode**: 26.2
-- **MacOs**: 14.0+
+- **MacOs**: 14.6+
 - **Language**: Swift
 
 ## 🚀 如何运行
 1. 克隆项目到本地
-2. 在 Xcode 中打开 `WorldClock.xcodeproj`
+2. 在 Xcode 中打开 `MacClock.xcodeproj`
 3. 点击 `Run` 按钮即可在模拟器运行
 
 ## 📝 许可证
