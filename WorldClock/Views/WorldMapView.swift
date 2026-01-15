@@ -1,5 +1,6 @@
 import SwiftUI
 import MapKit
+import Combine
 
 /// World map view with satellite imagery
 struct WorldMapView: NSViewRepresentable {
@@ -30,6 +31,10 @@ struct WorldMapView: NSViewRepresentable {
             mapView.addAnnotation(annotation)
         }
         
+        // Store mapView reference and start refresh timer
+        context.coordinator.mapViewRef = mapView
+        context.coordinator.startRefreshTimer()
+        
         return mapView
     }
     
@@ -39,7 +44,7 @@ struct WorldMapView: NSViewRepresentable {
         let existingAnnotations = mapView.annotations.compactMap { $0 as? CityAnnotation }
         let existingCityIds = Set(existingAnnotations.map { $0.city.id })
         
-        // Add new cities
+        // Add new cities or update existing ones
         if currentCityIds != existingCityIds {
             mapView.removeAnnotations(mapView.annotations)
             for city in cities {
@@ -47,6 +52,9 @@ struct WorldMapView: NSViewRepresentable {
                 mapView.addAnnotation(annotation)
             }
         }
+        
+        // Store cities reference for refresh timer
+        context.coordinator.cities = cities
         
         // Reset zoom to show entire globe (keep current center, just zoom out)
         if shouldResetZoom {
@@ -79,9 +87,68 @@ struct WorldMapView: NSViewRepresentable {
     class Coordinator: NSObject, MKMapViewDelegate {
         var parent: WorldMapView
         var lastCenteredCityId: UUID?
+        weak var mapViewRef: MKMapView?
+        var cities: [City] = []
+        private var refreshTimer: AnyCancellable?
         
         init(_ parent: WorldMapView) {
             self.parent = parent
+        }
+        
+        deinit {
+            refreshTimer?.cancel()
+        }
+        
+        /// Start a timer to refresh annotation views synced with the minute change
+        func startRefreshTimer() {
+            // Calculate seconds until next minute (when seconds = 0)
+            let now = Date()
+            let calendar = Calendar.current
+            let seconds = calendar.component(.second, from: now)
+            let secondsUntilNextMinute = Double(60 - seconds)
+            
+            // First, wait until the next minute boundary, then refresh and start the 60-second timer
+            DispatchQueue.main.asyncAfter(deadline: .now() + secondsUntilNextMinute) { [weak self] in
+                self?.refreshAnnotationViews()
+                
+                // Then set up the recurring 60-second timer
+                self?.refreshTimer = Timer.publish(every: 60, on: .main, in: .common)
+                    .autoconnect()
+                    .sink { [weak self] _ in
+                        self?.refreshAnnotationViews()
+                    }
+            }
+        }
+        
+        /// Refresh all annotation views with smooth animation
+        private func refreshAnnotationViews() {
+            guard let mapView = mapViewRef else { return }
+            
+            for annotation in mapView.annotations {
+                guard let cityAnnotation = annotation as? CityAnnotation,
+                      let annotationView = mapView.view(for: cityAnnotation) else { continue }
+                
+                // Find the hosting view containing the CityMarkerView
+                if let hostingView = annotationView.subviews.first as? NSHostingView<CityMarkerView> {
+                    // Create new hosting view with updated time
+                    let newHostingView = NSHostingView(rootView: CityMarkerView(city: cityAnnotation.city))
+                    let size = newHostingView.fittingSize
+                    newHostingView.frame = hostingView.frame
+                    newHostingView.alphaValue = 0
+                    
+                    annotationView.addSubview(newHostingView)
+                    
+                    // Smooth crossfade animation
+                    NSAnimationContext.runAnimationGroup({ context in
+                        context.duration = 0.3
+                        context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                        hostingView.animator().alphaValue = 0
+                        newHostingView.animator().alphaValue = 1
+                    }, completionHandler: {
+                        hostingView.removeFromSuperview()
+                    })
+                }
+            }
         }
         
         func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
@@ -107,6 +174,10 @@ struct WorldMapView: NSViewRepresentable {
                 annotationView?.centerOffset = CGPoint(x: 0, y: -size.height/2)
             } else {
                 annotationView?.annotation = cityAnnotation
+                // Update the hosting view with new time
+                if let hostingView = annotationView?.subviews.first as? NSHostingView<CityMarkerView> {
+                    hostingView.rootView = CityMarkerView(city: cityAnnotation.city)
+                }
             }
             
             return annotationView
@@ -114,7 +185,7 @@ struct WorldMapView: NSViewRepresentable {
     }
 }
 
-// MARK: - City Annotation
+// MARK: - City Annotation666
 
 class CityAnnotation: NSObject, MKAnnotation {
     let city: City

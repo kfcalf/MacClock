@@ -17,6 +17,7 @@
 		008 /* CityClockCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 108 /* CityClockCard.swift */; };
 		009 /* CityManagementView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 109 /* CityManagementView.swift */; };
 		010 /* WorldClockViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 110 /* WorldClockViewModel.swift */; };
+		6B896D4B2F0BF5E30052B5F5 /* MacClock.icon in Resources */ = {isa = PBXBuildFile; fileRef = 6B896D4A2F0BF5E30052B5F5 /* MacClock.icon */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -32,6 +33,7 @@
 		109 /* CityManagementView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CityManagementView.swift; sourceTree = "<group>"; };
 		110 /* WorldClockViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorldClockViewModel.swift; sourceTree = "<group>"; };
 		111 /* WorldClock.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = WorldClock.entitlements; sourceTree = "<group>"; };
+		6B896D4A2F0BF5E30052B5F5 /* MacClock.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = MacClock.icon; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -62,6 +64,7 @@
 				305 /* ViewModels */,
 				103 /* Assets.xcassets */,
 				111 /* WorldClock.entitlements */,
+				6B896D4A2F0BF5E30052B5F5 /* MacClock.icon */,
 			);
 			path = WorldClock;
 			sourceTree = "<group>";
@@ -162,6 +165,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				003 /* Assets.xcassets in Resources */,
+				6B896D4B2F0BF5E30052B5F5 /* MacClock.icon in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -306,7 +310,7 @@
 		702 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_APPICON_NAME = MacClock;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_ENTITLEMENTS = WorldClock/WorldClock.entitlements;
@@ -323,7 +327,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.6;
-				MARKETING_VERSION = 1.0.6;
+				MARKETING_VERSION = 1.0.8;
 				PRODUCT_BUNDLE_IDENTIFIER = com.worldclock.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -334,7 +338,7 @@
 		703 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_APPICON_NAME = MacClock;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_ENTITLEMENTS = WorldClock/WorldClock.entitlements;
@@ -351,7 +355,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.6;
-				MARKETING_VERSION = 1.0.6;
+				MARKETING_VERSION = 1.0.8;
 				PRODUCT_BUNDLE_IDENTIFIER = com.worldclock.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
