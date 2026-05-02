@@ -12,7 +12,8 @@ struct ContentView: View {
                 cities: viewModel.cities,
                 currentTime: viewModel.currentTime,
                 centerOnCity: viewModel.selectedCity,
-                shouldResetZoom: viewModel.shouldResetMapZoom
+                shouldResetZoom: viewModel.shouldResetMapZoom,
+                isGoogleMapMode: viewModel.isGoogleMapMode
             )
             .ignoresSafeArea()
             
@@ -22,6 +23,26 @@ struct ContentView: View {
                     Spacer()
                     
                     VStack(spacing: 10) {
+                        // Map Mode toggle Switch
+                        HStack(spacing: 8) {
+                            Text(viewModel.isGoogleMapMode ? "谷歌地球" : "高德地图")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(.white)
+                            
+                            Toggle("", isOn: $viewModel.isGoogleMapMode)
+                                .toggleStyle(.switch)
+                                .tint(.orange)
+                                .labelsHidden()
+                                .controlSize(.small)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(
+                            Capsule()
+                                .fill(Color.black.opacity(0.5))
+                        )
+                        .padding(.bottom, 6)
+                        
                         // Zoom reset button
                         Button(action: {
                             viewModel.resetMapZoom()

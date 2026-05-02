@@ -326,8 +326,8 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 14.6;
-				MARKETING_VERSION = v1.0.9;
+				MACOSX_DEPLOYMENT_TARGET = 15.6;
+				MARKETING_VERSION = v1.2.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.worldclock.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -354,8 +354,8 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 14.6;
-				MARKETING_VERSION = v1.0.9;
+				MACOSX_DEPLOYMENT_TARGET = 15.6;
+				MARKETING_VERSION = v1.2.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.worldclock.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;

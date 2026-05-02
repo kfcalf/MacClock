@@ -13,6 +13,11 @@ class WorldClockViewModel: ObservableObject {
         }
     }
     @Published var shouldResetMapZoom = false
+    @Published var isGoogleMapMode = false {
+        didSet {
+            UserDefaults.standard.set(isGoogleMapMode, forKey: "WorldClockIsGoogleMapMode")
+        }
+    }
     @Published var isPanelVisible = true
     @Published var draggingCityId: UUID?
     @Published var scrollOffset: CGFloat = 0
@@ -28,6 +33,10 @@ class WorldClockViewModel: ObservableObject {
         if savedOpacity > 0 {
             panelOpacity = savedOpacity
         }
+        
+        // Load saved map mode
+        isGoogleMapMode = UserDefaults.standard.bool(forKey: "WorldClockIsGoogleMapMode")
+        
         loadCities()
         startTimer()
     }

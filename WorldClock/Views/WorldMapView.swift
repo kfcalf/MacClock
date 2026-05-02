@@ -8,6 +8,7 @@ struct WorldMapView: NSViewRepresentable {
     let currentTime: Date
     var centerOnCity: City?
     var shouldResetZoom: Bool
+    var isGoogleMapMode: Bool
     
     func makeNSView(context: Context) -> MKMapView {
         let mapView = MKMapView()
@@ -65,8 +66,11 @@ struct WorldMapView: NSViewRepresentable {
             )
             mapView.setRegion(region, animated: true)
             context.coordinator.lastCenteredCityId = nil
-            return
+            // Reset zoom handled, update google map mode below
         }
+        
+        // Handle Google Map Mode toggle
+        context.coordinator.updateGoogleMapMode(isGoogleMapMode)
         
         // Center on selected city if changed
         if let city = centerOnCity, city.id != context.coordinator.lastCenteredCityId {
@@ -89,6 +93,8 @@ struct WorldMapView: NSViewRepresentable {
         var lastCenteredCityId: UUID?
         weak var mapViewRef: MKMapView?
         var cities: [City] = []
+        var isGoogleMapMode = false
+        var googleMapOverlay: MKTileOverlay?
         private var refreshTimer: AnyCancellable?
         
         init(_ parent: WorldMapView) {
@@ -149,6 +155,31 @@ struct WorldMapView: NSViewRepresentable {
                     })
                 }
             }
+        }
+        
+        func updateGoogleMapMode(_ isEnabled: Bool) {
+            guard isEnabled != isGoogleMapMode, let mapView = mapViewRef else { return }
+            isGoogleMapMode = isEnabled
+            
+            if isEnabled {
+                let overlay = CachedGoogleMapOverlay.shared
+                overlay.mapView = mapView
+                self.googleMapOverlay = overlay
+                mapView.addOverlay(overlay, level: .aboveRoads)
+            } else {
+                if let overlay = googleMapOverlay {
+                    mapView.removeOverlay(overlay)
+                    self.googleMapOverlay = nil
+                }
+            }
+        }
+        
+        func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
+            if let tileOverlay = overlay as? MKTileOverlay {
+                let renderer = MKTileOverlayRenderer(tileOverlay: tileOverlay)
+                return renderer
+            }
+            return MKOverlayRenderer(overlay: overlay)
         }
         
         func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
@@ -240,6 +271,152 @@ struct CityMarkerView: View {
 }
 
 #Preview {
-    WorldMapView(cities: City.defaultCities, currentTime: Date(), centerOnCity: nil, shouldResetZoom: false)
+    WorldMapView(cities: City.defaultCities, currentTime: Date(), centerOnCity: nil, shouldResetZoom: false, isGoogleMapMode: false)
         .frame(width: 800, height: 400)
+}
+
+// MARK: - Optimized Google Satellite Overlay
+
+class CachedGoogleMapOverlay: MKTileOverlay {
+    /// Shared singleton to reuse URLSession and caches across toggle cycles
+    static let shared = CachedGoogleMapOverlay()
+    
+    weak var mapView: MKMapView?
+    
+    private let session: URLSession
+    private let memoryCache = NSCache<NSString, NSData>()
+    private let diskCacheDir: URL
+    
+    /// Dedicated concurrent queue for disk reads
+    private let diskReadQueue = DispatchQueue(label: "GoogleTileDiskRead", qos: .userInitiated, attributes: .concurrent)
+    /// Dedicated serial queue for disk writes to prevent stalling reads
+    private let diskWriteQueue = DispatchQueue(label: "GoogleTileDiskWrite", qos: .background)
+    
+    override init(urlTemplate: String? = nil) {
+        // Persistent disk cache directory
+        let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("GoogleMapTiles", isDirectory: true)
+        try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
+        self.diskCacheDir = cacheDir
+        
+        // Use ephemeral configuration to disable default URLCache.
+        // This avoids "double caching" overhead since we manage disk cache manually.
+        let config = URLSessionConfiguration.ephemeral
+        config.httpMaximumConnectionsPerHost = 10 // Reduced from 40 to avoid Google rate-limiting
+        config.timeoutIntervalForRequest = 8
+        config.timeoutIntervalForResource = 20
+        config.waitsForConnectivity = false
+        config.httpShouldUsePipelining = true
+        self.session = URLSession(configuration: config)
+        
+        // Configure memory cache limits
+        memoryCache.countLimit = 500
+        memoryCache.totalCostLimit = 150 * 1024 * 1024 // 150MB
+        
+        super.init(urlTemplate: urlTemplate)
+        self.canReplaceMapContent = true
+        self.maximumZ = 20
+        self.tileSize = CGSize(width: 256, height: 256)
+    }
+    
+    /// Disk cache file path for a tile
+    @inline(__always)
+    private func diskPath(forKey key: String) -> URL {
+        diskCacheDir.appendingPathComponent(key)
+    }
+    
+    override func url(forTilePath path: MKTileOverlayPath) -> URL {
+        let subdomains = ["mt0", "mt1", "mt2", "mt3"]
+        let subdomain = subdomains[Int(abs(path.x + path.y) % 4)]
+        let scale = path.contentScaleFactor > 1.0 ? 2 : 1
+        let urlString = "https://\(subdomain).google.com/vt/lyrs=s&x=\(path.x)&y=\(path.y)&z=\(path.z)&scale=\(scale)"
+        return URL(string: urlString)!
+    }
+    
+    /// Fast cache key without percent-encoding overhead
+    @inline(__always)
+    private func cacheKey(for path: MKTileOverlayPath) -> String {
+        "\(path.z)_\(path.x)_\(path.y)_\(path.contentScaleFactor > 1.0 ? 2 : 1)"
+    }
+    
+    override func loadTile(at path: MKTileOverlayPath, result: @escaping (Data?, Error?) -> Void) {
+        let key = cacheKey(for: path)
+        let nsKey = key as NSString
+        
+        // L1: Memory cache — instant
+        if let cachedData = memoryCache.object(forKey: nsKey) {
+            result(cachedData as Data, nil)
+            return
+        }
+        
+        // L2: Disk cache — non-blocking concurrent read
+        let filePath = diskPath(forKey: key)
+        diskReadQueue.async { [weak self] in
+            // Direct read without fileExists check (saves 1 disk I/O operation)
+            if let diskData = try? Data(contentsOf: filePath) {
+                self?.memoryCache.setObject(diskData as NSData, forKey: nsKey, cost: diskData.count)
+                result(diskData, nil)
+                return
+            }
+            
+            // L3: Network fetch
+            self?.fetchTileFromNetwork(url: self!.url(forTilePath: path), nsKey: nsKey, filePath: filePath, path: path, result: result)
+        }
+    }
+    
+    /// Fetch tile from network with priority adjustment based on visibility
+    private func fetchTileFromNetwork(url: URL, nsKey: NSString, filePath: URL, path: MKTileOverlayPath, result: @escaping (Data?, Error?) -> Void) {
+        var request = URLRequest(url: url)
+        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        
+        let task = session.dataTask(with: request) { [weak self] data, response, error in
+            guard let self = self else { return }
+            
+            if let data = data, error == nil {
+                // Save to memory cache
+                self.memoryCache.setObject(data as NSData, forKey: nsKey, cost: data.count)
+                
+                // Save to disk asynchronously on a separate background serial queue.
+                self.diskWriteQueue.async {
+                    try? data.write(to: filePath, options: .atomic)
+                }
+            }
+            result(data, error)
+        }
+        
+        // Dynamically adjust task priority based on whether the tile is currently visible
+        DispatchQueue.main.async { [weak self, weak task] in
+            guard let self = self, let task = task, task.state == .running || task.state == .suspended else { return }
+            if let mapView = self.mapView {
+                let tileRect = path.boundingMapRect()
+                if mapView.visibleMapRect.intersects(tileRect) {
+                    task.priority = URLSessionTask.highPriority
+                } else {
+                    task.priority = URLSessionTask.lowPriority
+                }
+            } else {
+                task.priority = URLSessionTask.highPriority
+            }
+        }
+        
+        task.resume()
+    }
+    
+}
+
+extension MKTileOverlayPath {
+    /// Calculates the MKMapRect for this tile to determine if it is visible on the map
+    func boundingMapRect() -> MKMapRect {
+        let zoom = Double(self.z)
+        let n = pow(2.0, zoom)
+        
+        let width = MKMapSize.world.width / n
+        let height = MKMapSize.world.height / n
+        
+        let mapX = Double(self.x) * width
+        let mapY = Double(self.y) * height
+        
+        return MKMapRect(x: mapX, y: mapY, width: width, height: height)
+    }
 }
