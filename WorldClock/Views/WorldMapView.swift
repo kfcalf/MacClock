@@ -374,7 +374,7 @@ class CachedGoogleMapOverlay: MKTileOverlay {
             guard let self = self else { return }
             
             if let data = data, error == nil {
-                // Save to memory cache
+                // Save to memory cache6
                 self.memoryCache.setObject(data as NSData, forKey: nsKey, cost: data.count)
                 
                 // Save to disk asynchronously on a separate background serial queue.
