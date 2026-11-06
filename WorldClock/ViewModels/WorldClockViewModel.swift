@@ -1,5 +1,139 @@
 import SwiftUI
 import Combine
+import CoreLocation
+
+// MARK: - Coordinate Formatter
+
+struct CoordinateFormatter {
+    static func formatDMS(latitude: Double, longitude: Double) -> String {
+        let latDirection = latitude >= 0 ? "北纬" : "南纬"
+        let lonDirection = longitude >= 0 ? "东经" : "西经"
+        
+        let absLat = abs(latitude)
+        let latDeg = Int(absLat)
+        let latMinDec = (absLat - Double(latDeg)) * 60
+        let latMin = Int(latMinDec)
+        var latSec = Int(round((latMinDec - Double(latMin)) * 60))
+        
+        var finalLatDeg = latDeg
+        var finalLatMin = latMin
+        if latSec >= 60 {
+            latSec = 0
+            finalLatMin += 1
+            if finalLatMin >= 60 {
+                finalLatMin = 0
+                finalLatDeg += 1
+            }
+        }
+        
+        let absLon = abs(longitude)
+        let lonDeg = Int(absLon)
+        let lonMinDec = (absLon - Double(lonDeg)) * 60
+        let lonMin = Int(lonMinDec)
+        var lonSec = Int(round((lonMinDec - Double(lonMin)) * 60))
+        
+        var finalLonDeg = lonDeg
+        var finalLonMin = lonMin
+        if lonSec >= 60 {
+            lonSec = 0
+            finalLonMin += 1
+            if finalLonMin >= 60 {
+                finalLonMin = 0
+                finalLonDeg += 1
+            }
+        }
+        
+        return String(format: "%@ %d°%02d′%02d″  %@ %d°%02d′%02d″",
+                      latDirection, finalLatDeg, finalLatMin, latSec,
+                      lonDirection, finalLonDeg, finalLonMin, lonSec)
+    }
+    
+    static func formatDecimal(latitude: Double, longitude: Double) -> String {
+        let latDirection = latitude >= 0 ? "北纬" : "南纬"
+        let lonDirection = longitude >= 0 ? "东经" : "西经"
+        return String(format: "%@ %.4f°  %@ %.4f°", latDirection, abs(latitude), lonDirection, abs(longitude))
+    }
+}
+
+// MARK: - Map Coordinate State
+
+class MapCoordinateState: ObservableObject {
+    @Published var coordinate: CLLocationCoordinate2D?
+    @Published var isHovering: Bool = false
+    @Published var formatStyle: CoordinateFormatStyle = .dms
+    
+    enum CoordinateFormatStyle: Int {
+        case dms = 0
+        case decimal = 1
+        case full = 2
+    }
+    
+    func update(coordinate: CLLocationCoordinate2D?, isHovering: Bool) {
+        if self.isHovering != isHovering {
+            self.isHovering = isHovering
+        }
+        if coordinate == nil {
+            if self.coordinate != nil {
+                self.coordinate = nil
+            }
+            return
+        }
+        guard let newCoord = coordinate else { return }
+        if let oldCoord = self.coordinate {
+            if abs(oldCoord.latitude - newCoord.latitude) > 0.000005 ||
+               abs(oldCoord.longitude - newCoord.longitude) > 0.000005 {
+                self.coordinate = newCoord
+            }
+        } else {
+            self.coordinate = newCoord
+        }
+    }
+    
+    var formattedText: String {
+        guard let coord = coordinate else { return "" }
+        switch formatStyle {
+        case .dms:
+            return CoordinateFormatter.formatDMS(latitude: coord.latitude, longitude: coord.longitude)
+        case .decimal:
+            return CoordinateFormatter.formatDecimal(latitude: coord.latitude, longitude: coord.longitude)
+        case .full:
+            let dms = CoordinateFormatter.formatDMS(latitude: coord.latitude, longitude: coord.longitude)
+            let latDir = coord.latitude >= 0 ? "N" : "S"
+            let lonDir = coord.longitude >= 0 ? "E" : "W"
+            return String(format: "%@ (%.4f° %@, %.4f° %@)", dms, abs(coord.latitude), latDir, abs(coord.longitude), lonDir)
+        }
+    }
+    
+    var currentString: String {
+        formattedText
+    }
+    
+    var dmsString: String {
+        guard let coord = coordinate else { return "" }
+        return CoordinateFormatter.formatDMS(latitude: coord.latitude, longitude: coord.longitude)
+    }
+    
+    var decimalString: String {
+        guard let coord = coordinate else { return "" }
+        return CoordinateFormatter.formatDecimal(latitude: coord.latitude, longitude: coord.longitude)
+    }
+    
+    var standardPairString: String {
+        guard let coord = coordinate else { return "" }
+        return String(format: "%.6f, %.6f", coord.latitude, coord.longitude)
+    }
+    
+    func cycleFormat() {
+        switch formatStyle {
+        case .dms:
+            formatStyle = .decimal
+        case .decimal:
+            formatStyle = .full
+        case .full:
+            formatStyle = .dms
+        }
+    }
+}
 
 /// ViewModel for managing world clock state
 class WorldClockViewModel: ObservableObject {
@@ -18,6 +152,15 @@ class WorldClockViewModel: ObservableObject {
             UserDefaults.standard.set(isGoogleMapMode, forKey: "WorldClockIsGoogleMapMode")
         }
     }
+    @Published var isCrosshairEnabled = false {
+        didSet {
+            UserDefaults.standard.set(isCrosshairEnabled, forKey: "WorldClockIsCrosshairEnabled")
+            if !isCrosshairEnabled {
+                coordinateState.update(coordinate: nil, isHovering: false)
+            }
+        }
+    }
+    let coordinateState = MapCoordinateState()
     @Published var isPanelVisible = true
     @Published var draggingCityId: UUID?
     @Published var scrollOffset: CGFloat = 0
@@ -36,6 +179,9 @@ class WorldClockViewModel: ObservableObject {
         
         // Load saved map mode
         isGoogleMapMode = UserDefaults.standard.bool(forKey: "WorldClockIsGoogleMapMode")
+        
+        // Load saved crosshair mode
+        isCrosshairEnabled = UserDefaults.standard.bool(forKey: "WorldClockIsCrosshairEnabled")
         
         loadCities()
         startTimer()

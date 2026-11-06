@@ -10,7 +10,24 @@ struct WorldClockApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1200, height: 800)
+        .commands {
+            CommandGroup(replacing: .appInfo) {
+                Button("关于 MacClock") {
+                    showCustomAboutPanel()
+                }
+            }
+        }
     }
+}
+
+/// Display about panel formatted as "v1.2.2" without build number
+func showCustomAboutPanel() {
+    let rawVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
+    let displayVersion = rawVersion.hasPrefix("v") ? rawVersion : "v\(rawVersion)"
+    NSApplication.shared.orderFrontStandardAboutPanel(options: [
+        .applicationVersion: displayVersion,
+        .version: ""
+    ])
 }
 
 // MARK: - App Delegate for Window Configuration
@@ -19,6 +36,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             self.configureMainWindow()
+            self.configureAboutMenuItem()
         }
     }
     
@@ -40,5 +58,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         // Allow the window to be moved by dragging anywhere
         window.isMovableByWindowBackground = true
+        
+        // Enable mouse moved events for crosshair tracking
+        window.acceptsMouseMovedEvents = true
+    }
+    
+    private func configureAboutMenuItem() {
+        if let appMenu = NSApplication.shared.mainMenu?.items.first?.submenu {
+            for item in appMenu.items {
+                if item.action == #selector(NSApplication.orderFrontStandardAboutPanel(_:)) {
+                    item.target = self
+                    item.action = #selector(showAboutPanel(_:))
+                }
+            }
+        }
+    }
+    
+    @objc func showAboutPanel(_ sender: Any?) {
+        showCustomAboutPanel()
     }
 }

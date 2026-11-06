@@ -9,6 +9,8 @@ struct WorldMapView: NSViewRepresentable {
     var centerOnCity: City?
     var shouldResetZoom: Bool
     var isGoogleMapMode: Bool
+    var isCrosshairEnabled: Bool
+    let coordinateState: MapCoordinateState
     
     func makeNSView(context: Context) -> MKMapView {
         let mapView = MKMapView()
@@ -36,10 +38,14 @@ struct WorldMapView: NSViewRepresentable {
         context.coordinator.mapViewRef = mapView
         context.coordinator.startRefreshTimer()
         
+        // Setup crosshair overlay and tracking
+        context.coordinator.setupCrosshair(mapView: mapView, coordinateState: coordinateState, isEnabled: isCrosshairEnabled)
+        
         return mapView
     }
     
     func updateNSView(_ mapView: MKMapView, context: Context) {
+        context.coordinator.parent = self
         // Only update annotations if cities list changed
         let currentCityIds = Set(cities.map { $0.id })
         let existingAnnotations = mapView.annotations.compactMap { $0 as? CityAnnotation }
@@ -72,6 +78,9 @@ struct WorldMapView: NSViewRepresentable {
         // Handle Google Map Mode toggle
         context.coordinator.updateGoogleMapMode(isGoogleMapMode)
         
+        // Handle Crosshair & Coordinate tracking toggle
+        context.coordinator.updateCrosshair(isEnabled: isCrosshairEnabled, coordinateState: coordinateState)
+        
         // Center on selected city if changed
         if let city = centerOnCity, city.id != context.coordinator.lastCenteredCityId {
             context.coordinator.lastCenteredCityId = city.id
@@ -97,12 +106,136 @@ struct WorldMapView: NSViewRepresentable {
         var googleMapOverlay: MKTileOverlay?
         private var refreshTimer: AnyCancellable?
         
+        // Crosshair & coordinates support
+        let crosshairOverlayView = CrosshairOverlayView()
+        private var eventMonitor: Any?
+        var lastMousePoint: CGPoint?
+        weak var coordinateState: MapCoordinateState?
+        var isCrosshairEnabled: Bool = false
+        
         init(_ parent: WorldMapView) {
             self.parent = parent
         }
         
         deinit {
             refreshTimer?.cancel()
+            if let monitor = eventMonitor {
+                NSEvent.removeMonitor(monitor)
+            }
+        }
+        
+        func setupCrosshair(mapView: MKMapView, coordinateState: MapCoordinateState, isEnabled: Bool) {
+            self.coordinateState = coordinateState
+            if isEnabled {
+                updateCrosshair(isEnabled: true, coordinateState: coordinateState)
+            }
+        }
+        
+        func updateCrosshair(isEnabled: Bool, coordinateState: MapCoordinateState) {
+            self.coordinateState = coordinateState
+            self.isCrosshairEnabled = isEnabled
+            
+            guard let mapView = mapViewRef else { return }
+            
+            if isEnabled {
+                if crosshairOverlayView.superview == nil {
+                    crosshairOverlayView.frame = mapView.bounds
+                    crosshairOverlayView.autoresizingMask = [.width, .height]
+                    mapView.addSubview(crosshairOverlayView)
+                } else {
+                    mapView.addSubview(crosshairOverlayView)
+                }
+                mapView.window?.acceptsMouseMovedEvents = true
+                
+                // Initialize crosshair position immediately if not already set
+                if lastMousePoint == nil {
+                    if let window = mapView.window {
+                        let winPt = window.convertPoint(fromScreen: NSEvent.mouseLocation)
+                        let mapPt = mapView.convert(winPt, from: nil)
+                        if mapView.bounds.contains(mapPt) {
+                            lastMousePoint = mapPt
+                        } else {
+                            lastMousePoint = CGPoint(x: mapView.bounds.midX, y: mapView.bounds.midY)
+                        }
+                    } else {
+                        lastMousePoint = CGPoint(x: mapView.bounds.midX, y: mapView.bounds.midY)
+                    }
+                }
+                
+                if let pt = lastMousePoint {
+                    crosshairOverlayView.update(point: pt, bounds: mapView.bounds)
+                    let rawCoord = mapView.convert(pt, toCoordinateFrom: mapView)
+                    if !rawCoord.latitude.isNaN && !rawCoord.longitude.isNaN {
+                        let clampedLat = max(-90.0, min(90.0, rawCoord.latitude))
+                        let normLon = normalizeLongitude(rawCoord.longitude)
+                        let coord = CLLocationCoordinate2D(latitude: clampedLat, longitude: normLon)
+                        DispatchQueue.main.async { [weak self] in
+                            self?.coordinateState?.update(coordinate: coord, isHovering: true)
+                        }
+                    }
+                }
+                
+                if eventMonitor == nil {
+                    eventMonitor = NSEvent.addLocalMonitorForEvents(
+                        matching: [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged]
+                    ) { [weak self] event in
+                        guard let self = self, self.isCrosshairEnabled, let mapView = self.mapViewRef else {
+                            return event
+                        }
+                        self.handleMouseEvent(event, in: mapView)
+                        return event
+                    }
+                }
+            } else {
+                lastMousePoint = nil
+                crosshairOverlayView.hide()
+                crosshairOverlayView.removeFromSuperview()
+                if let monitor = eventMonitor {
+                    NSEvent.removeMonitor(monitor)
+                    eventMonitor = nil
+                }
+                
+                DispatchQueue.main.async { [weak self] in
+                    self?.coordinateState?.update(coordinate: nil, isHovering: false)
+                }
+            }
+        }
+        
+        private func handleMouseEvent(_ event: NSEvent, in mapView: MKMapView) {
+            guard isCrosshairEnabled else { return }
+            
+            let windowPoint = event.locationInWindow
+            let pointInMap = mapView.convert(windowPoint, from: nil)
+            
+            if mapView.bounds.contains(pointInMap) {
+                lastMousePoint = pointInMap
+                crosshairOverlayView.update(point: pointInMap, bounds: mapView.bounds)
+                
+                let rawCoord = mapView.convert(pointInMap, toCoordinateFrom: mapView)
+                if !rawCoord.latitude.isNaN && !rawCoord.longitude.isNaN {
+                    let clampedLat = max(-90.0, min(90.0, rawCoord.latitude))
+                    let normLon = normalizeLongitude(rawCoord.longitude)
+                    let coord = CLLocationCoordinate2D(latitude: clampedLat, longitude: normLon)
+                    DispatchQueue.main.async { [weak self] in
+                        self?.coordinateState?.update(coordinate: coord, isHovering: true)
+                    }
+                }
+            }
+        }
+        
+        func mapViewDidChangeVisibleRegion(_ mapView: MKMapView) {
+            if isCrosshairEnabled, let pt = lastMousePoint {
+                crosshairOverlayView.update(point: pt, bounds: mapView.bounds)
+                let rawCoord = mapView.convert(pt, toCoordinateFrom: mapView)
+                if !rawCoord.latitude.isNaN && !rawCoord.longitude.isNaN {
+                    let clampedLat = max(-90.0, min(90.0, rawCoord.latitude))
+                    let normLon = normalizeLongitude(rawCoord.longitude)
+                    let coord = CLLocationCoordinate2D(latitude: clampedLat, longitude: normLon)
+                    DispatchQueue.main.async { [weak self] in
+                        self?.coordinateState?.update(coordinate: coord, isHovering: true)
+                    }
+                }
+            }
         }
         
         /// Start a timer to refresh annotation views synced with the minute change
@@ -270,9 +403,111 @@ struct CityMarkerView: View {
     }
 }
 
+// MARK: - Longitude Normalization Helper
+
+@inline(__always)
+func normalizeLongitude(_ lon: Double) -> Double {
+    var l = lon.truncatingRemainder(dividingBy: 360)
+    if l > 180 { l -= 360 }
+    if l < -180 { l += 360 }
+    return l
+}
+
+// MARK: - Semi-Transparent Dashed Crosshair Overlay View
+
+class CrosshairOverlayView: NSView {
+    override var isFlipped: Bool { true }
+    
+    private let horizontalLine = CAShapeLayer()
+    private let verticalLine = CAShapeLayer()
+    private var currentPoint: CGPoint?
+    
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        setupLayers()
+    }
+    
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setupLayers()
+    }
+    
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        // Completely pass-through to MKMapView
+        return nil
+    }
+    
+    private func setupLayers() {
+        wantsLayer = true
+        layer?.masksToBounds = false
+        
+        let strokeColor = NSColor.white.withAlphaComponent(0.65).cgColor
+        let shadowColor = NSColor.black.withAlphaComponent(0.6).cgColor
+        
+        for line in [horizontalLine, verticalLine] {
+            line.strokeColor = strokeColor
+            line.lineWidth = 1.0
+            line.lineDashPattern = [6, 4]
+            line.fillColor = nil
+            line.shadowColor = shadowColor
+            line.shadowOpacity = 0.6
+            line.shadowOffset = .zero
+            line.shadowRadius = 1.0
+            layer?.addSublayer(line)
+        }
+        
+        isHidden = true
+    }
+    
+    func update(point: CGPoint, bounds: CGRect) {
+        currentPoint = point
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        
+        horizontalLine.frame = bounds
+        verticalLine.frame = bounds
+        
+        let hPath = CGMutablePath()
+        hPath.move(to: CGPoint(x: 0, y: point.y))
+        hPath.addLine(to: CGPoint(x: bounds.width, y: point.y))
+        horizontalLine.path = hPath
+        
+        let vPath = CGMutablePath()
+        vPath.move(to: CGPoint(x: point.x, y: 0))
+        vPath.addLine(to: CGPoint(x: point.x, y: bounds.height))
+        verticalLine.path = vPath
+        
+        isHidden = false
+        CATransaction.commit()
+    }
+    
+    func hide() {
+        currentPoint = nil
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        isHidden = true
+        CATransaction.commit()
+    }
+    
+    override func resizeSubviews(withOldSize oldSize: NSSize) {
+        super.resizeSubviews(withOldSize: oldSize)
+        if let pt = currentPoint, !isHidden {
+            update(point: pt, bounds: bounds)
+        }
+    }
+}
+
 #Preview {
-    WorldMapView(cities: City.defaultCities, currentTime: Date(), centerOnCity: nil, shouldResetZoom: false, isGoogleMapMode: false)
-        .frame(width: 800, height: 400)
+    WorldMapView(
+        cities: City.defaultCities,
+        currentTime: Date(),
+        centerOnCity: nil,
+        shouldResetZoom: false,
+        isGoogleMapMode: false,
+        isCrosshairEnabled: true,
+        coordinateState: MapCoordinateState()
+    )
+    .frame(width: 800, height: 400)
 }
 
 // MARK: - Optimized Google Satellite Overlay

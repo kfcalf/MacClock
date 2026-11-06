@@ -5,6 +5,11 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     @StateObject private var viewModel = WorldClockViewModel()
     
+    private var appVersionString: String {
+        let rawVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
+        return rawVersion.hasPrefix("v") ? rawVersion : "v\(rawVersion)"
+    }
+    
     var body: some View {
         ZStack(alignment: .bottom) {
             // World Map as full background
@@ -13,7 +18,9 @@ struct ContentView: View {
                 currentTime: viewModel.currentTime,
                 centerOnCity: viewModel.selectedCity,
                 shouldResetZoom: viewModel.shouldResetMapZoom,
-                isGoogleMapMode: viewModel.isGoogleMapMode
+                isGoogleMapMode: viewModel.isGoogleMapMode,
+                isCrosshairEnabled: viewModel.isCrosshairEnabled,
+                coordinateState: viewModel.coordinateState
             )
             .ignoresSafeArea()
             
@@ -42,6 +49,29 @@ struct ContentView: View {
                                 .fill(Color.black.opacity(0.5))
                         )
                         .padding(.bottom, 6)
+                        
+                        // Crosshair and Coordinates toggle button
+                        Button(action: {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                viewModel.isCrosshairEnabled.toggle()
+                            }
+                        }) {
+                            ZStack {
+                                Circle()
+                                    .fill(viewModel.isCrosshairEnabled ? Color.orange.opacity(0.25) : Color.black.opacity(0.5))
+                                    .overlay(
+                                        Circle()
+                                            .stroke(viewModel.isCrosshairEnabled ? Color.orange.opacity(0.7) : Color.clear, lineWidth: 1.5)
+                                    )
+                                
+                                Image(systemName: "scope")
+                                    .font(.system(size: 16, weight: .semibold))
+                                    .foregroundColor(viewModel.isCrosshairEnabled ? .orange : .white)
+                            }
+                            .frame(width: 36, height: 36)
+                        }
+                        .buttonStyle(.plain)
+                        .help(viewModel.isCrosshairEnabled ? "关闭十字准星与坐标" : "开启十字准星与坐标")
                         
                         // Zoom reset button
                         Button(action: {
@@ -84,9 +114,23 @@ struct ContentView: View {
                 Spacer()
             }
             
-            // Bottom section with city clocks - animated
-            if viewModel.isPanelVisible {
-                VStack(spacing: 0) {
+            // Bottom section with coordinates badge and city clocks
+            VStack(spacing: 0) {
+                Spacer()
+                
+                // Bottom right coordinate display
+                if viewModel.isCrosshairEnabled {
+                    HStack {
+                        Spacer()
+                        CoordinateBadgeView(coordinateState: viewModel.coordinateState)
+                            .padding(.trailing, 20)
+                            .padding(.bottom, viewModel.isPanelVisible ? 12 : 20)
+                    }
+                }
+                
+                // Bottom section with city clocks - animated
+                if viewModel.isPanelVisible {
+                    VStack(spacing: 0) {
                     // Header with add button
                     HStack {
                         Text("城市时钟")
@@ -202,7 +246,7 @@ struct ContentView: View {
                             .font(.system(size: 11, weight: .medium))
                             .foregroundColor(.white.opacity(0.5))
                         
-                        Text("v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0")")
+                        Text(appVersionString)
                             .font(.system(size: 10, weight: .medium))
                             .foregroundColor(.white.opacity(0.4))
                     }
@@ -216,10 +260,102 @@ struct ContentView: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .sheet(isPresented: $viewModel.showingCityManager) {
-            CityManagementView(viewModel: viewModel)
+    }
+    .sheet(isPresented: $viewModel.showingCityManager) {
+        CityManagementView(viewModel: viewModel)
+    }
+}
+
+// MARK: - Coordinate Badge View
+
+struct CoordinateBadgeView: View {
+    @ObservedObject var coordinateState: MapCoordinateState
+    @State private var showCopiedAlert = false
+    @State private var isHovered = false
+    
+    var body: some View {
+        if coordinateState.coordinate != nil {
+            HStack(spacing: 8) {
+                // Scope / Aim icon
+                Image(systemName: "scope")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundColor(.orange)
+                
+                // Formatted coordinate string
+                Text(coordinateState.formattedText)
+                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+                
+                if showCopiedAlert {
+                    Text("已复制")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.orange)
+                        .transition(.scale.combined(with: .opacity))
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(
+                Capsule()
+                    .fill(Color.black.opacity(isHovered ? 0.8 : 0.65))
+                    .overlay(
+                        Capsule()
+                            .stroke(isHovered ? Color.orange.opacity(0.5) : Color.white.opacity(0.15), lineWidth: 0.5)
+                    )
+            )
+            .shadow(color: .black.opacity(0.4), radius: 6, x: 0, y: 3)
+            .onHover { hovering in
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    isHovered = hovering
+                }
+            }
+            .onTapGesture {
+                copyCoordinateToClipboard()
+            }
+            .help("点击复制坐标，右键切换显示格式")
+            .contextMenu {
+                Button("复制度分秒格式 (DMS)") {
+                    copyToClipboard(coordinateState.dmsString)
+                }
+                Button("复制十进制格式 (DD)") {
+                    copyToClipboard(coordinateState.decimalString)
+                }
+                Button("复制标准坐标 (纬度, 经度)") {
+                    copyToClipboard(coordinateState.standardPairString)
+                }
+                Divider()
+                Button("切换显示格式 (度分秒 / 十进制 / 混合)") {
+                    coordinateState.cycleFormat()
+                }
+            }
+            .transition(.opacity.combined(with: .scale(scale: 0.95)))
+            .animation(.easeInOut(duration: 0.2), value: coordinateState.isHovering)
         }
     }
+    
+    private func copyCoordinateToClipboard() {
+        let text = coordinateState.currentString
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+            showCopiedAlert = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+            withAnimation(.easeOut(duration: 0.2)) {
+                showCopiedAlert = false
+            }
+        }
+    }
+    
+    private func copyToClipboard(_ text: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+    }
+}
 }
 
 // MARK: - Visual Effect Blur for macOS
